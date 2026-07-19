@@ -1,5 +1,9 @@
+#!/system/bin/sh
+# ================================================================
+# Dynamic SurfaceFlinger Tuning — INSTALL SCRIPT
+# ================================================================
+
 run_sf=1000000000
-remove_sf=1000000
 
 other() {
     a=$1   # client cache / bool
@@ -29,25 +33,39 @@ other() {
 }
 
 auto_sf_dyn() {
+    sf_flag="$1"
+
     refresh_rate=$(dumpsys display | grep -oE 'fps=[0-9]+' | head -n 1 | cut -d= -f2)
 
     if [ -z "$refresh_rate" ]; then
         refresh_rate=62
     fi
 
-    # frame time in nanoseconds
+    # frame time dalam nanosecond
     frame_time=$((1000000000 / refresh_rate))
 
-    early_offset=$((frame_time / 5))
+    # early_offset HARUS negatif — app/SF mulai kerja sebelum vsync
+    early_offset=$(( (frame_time / 5) * -1 ))
+
+    # late_offset tetap positif — deadline kerja selesai
     late_offset=$((frame_time * 5 / 6))
-    negative_offset=$((early_offset * -1))
-    gl_duration=$((late_offset + frame_time / 15))
-    idle_timer=$((frame_time / 1000000 + 800))
+
+    # gl_duration dikurangi dari late_offset, bukan ditambah
+    gl_duration=$((late_offset - frame_time / 15))
+
+    # idle_timer di-clamp minimum 100ms
+    idle_timer_ms=$((frame_time / 1000000))
+    if [ "$idle_timer_ms" -lt 100 ]; then
+        idle_timer=100
+    else
+        idle_timer=$idle_timer_ms
+    fi
+
     sampling_duration=$((frame_time * 4 / 5))
     sampling_period=$((frame_time * 9 / 10))
 
-    setprop debug.sf.hw "$2"
-    setprop debug.egl.hw "$2"
+    setprop debug.sf.hw "$sf_flag"
+    setprop debug.egl.hw "$sf_flag"
     setprop debug.sf.hwc.min.duration "$frame_time"
     setprop debug.sf.early.app.duration "$early_offset"
     setprop debug.sf.late.app.duration "$late_offset"
@@ -60,18 +78,26 @@ auto_sf_dyn() {
     setprop debug.sf.early_gl_phase_offset_ns "$early_offset"
     setprop debug.sf.early_app_phase_offset_ns "$early_offset"
     setprop debug.sf.early_gl_app_phase_offset_ns "$early_offset"
-    setprop debug.sf.high_fps_early_app_phase_offset_ns "$negative_offset"
+    setprop debug.sf.high_fps_early_app_phase_offset_ns "$early_offset"
     setprop debug.sf.high_fps_late_app_phase_offset_ns "$late_offset"
-    setprop debug.sf.high_fps_early_sf_phase_offset_ns "$negative_offset"
+    setprop debug.sf.high_fps_early_sf_phase_offset_ns "$early_offset"
     setprop debug.sf.high_fps_late_sf_phase_offset_ns "$late_offset"
     setprop debug.sf.high_fps_early_gl_phase_offset_ns "$early_offset"
     setprop debug.sf.high_fps_early_gl_app_phase_offset_ns "$early_offset"
+
+    echo "[i] Refresh Rate: ${refresh_rate}Hz"
+    echo "[i] Frame Time: ${frame_time}ns"
+    echo "[i] Early Offset: ${early_offset}ns"
+    echo "[i] Late Offset: ${late_offset}ns"
+    echo "[i] GL Duration: ${gl_duration}ns"
+    echo "[i] Idle Timer: ${idle_timer}ms"
 }
 
 main_active() {
-    auto_sf_dyn $run_sf 1
+    auto_sf_dyn "$run_sf"
     other 1 1 0
-    echo "[-] Dynamic SurfaceFlinger Actived"
+    echo "[+] Dynamic SurfaceFlinger Activated"
+    echo "[+] SurfaceFlinger 2.0 | Last Update"
 }
 
 main_active
