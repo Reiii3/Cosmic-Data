@@ -1,9 +1,14 @@
 #!/system/bin/sh
 # ================================================================
-# Dynamic SurfaceFlinger Tuning — INSTALL SCRIPT
+# Dynamic SurfaceFlinger Tuning — INSTALL SCRIPT (fixed)
 # ================================================================
 
-run_sf=1000000000
+# [FIX] run_sf sebelumnya 1000000000 — dipakai sebagai boolean flag
+#     ke debug.sf.hw / debug.egl.hw, padahal property itu di seluruh
+#     script lain lu selalu di-set boolean (1/0). Diganti ke 1 dulu
+#     sebagai default aman; VERIFIKASI ke device lu apakah nilai asli
+#     (1000000000) memang disengaja buat semantik lain sebelum revert.
+run_sf=1
 
 other() {
     a=$1   # client cache / bool
@@ -35,11 +40,25 @@ other() {
 auto_sf_dyn() {
     sf_flag="$1"
 
-    refresh_rate=$(dumpsys display | grep -oE 'fps=[0-9]+' | head -n 1 | cut -d= -f2)
+    # [FIX] tambahin 2>/dev/null di dumpsys itu sendiri (bukan cuma di
+    #     ujung pipeline) — nutup pesan "Broken pipe" yang muncul pas
+    #     head -n1 nutup pipe duluan sementara dumpsys masih nulis.
+    #     Nilai yang keambil tetap sama, cuma stderr-nya diredam.
+    refresh_rate=$(dumpsys display 2>/dev/null | grep -oE 'fps=[0-9]+' | head -n 1 | cut -d= -f2)
 
-    if [ -z "$refresh_rate" ]; then
+    # [FIX] guard div-by-zero — sebelumnya cuma cek kosong (-z), gak
+    #     cek nol. refresh_rate="0" lolos guard lama dan bikin
+    #     `1000000000 / 0` crash arithmetic, menghentikan SELURUH
+    #     script di titik ini (semua setprop di bawah gak pernah jalan).
+    if [ -z "$refresh_rate" ] || [ "$refresh_rate" -eq 0 ] 2>/dev/null; then
         refresh_rate=62
     fi
+
+    # [FIX] guard tambahan kalau refresh_rate ternyata bukan angka
+    #     valid sama sekali (format dumpsys beda di OEM tertentu)
+    case "$refresh_rate" in
+        ''|*[!0-9]*) refresh_rate=62 ;;
+    esac
 
     # frame time dalam nanosecond
     frame_time=$((1000000000 / refresh_rate))
@@ -97,7 +116,7 @@ main_active() {
     auto_sf_dyn "$run_sf"
     other 1 1 0
     echo "[+] Dynamic SurfaceFlinger Activated"
-    echo "[+] SurfaceFlinger 2.0 | Last Update"
+    echo "[+] SurfaceFlinger 2.1 | Last Update"
 }
 
 main_active

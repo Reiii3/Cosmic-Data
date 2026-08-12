@@ -1,13 +1,18 @@
 #!/system/bin/sh
 # ================================================================
-# Dynamic SurfaceFlinger Tuning — BALANCE SCRIPT (Daily Mode)
+# Dynamic SurfaceFlinger Tuning — BALANCE SCRIPT (Daily Mode, fixed)
 # ================================================================
 # Versi tengah antara install (full aggressive) dan restore
 # (kosongkan semua). Cocok untuk daily mode dimana SurfaceFlinger
 # tetap perlu efisien tapi tidak sekencang mode gaming.
 # ================================================================
 
-balance_sf=1000000
+# [FIX] balance_sf sebelumnya 1000000, install.sh punya 1000000000
+#     buat property yang sama (debug.sf.hw/debug.egl.hw) — dua nilai
+#     beda jauh tanpa pola jelas mengindikasikan bug/leftover, bukan
+#     disengaja. Diseragamin ke 1 (boolean) sama kayak install.sh;
+#     VERIFIKASI ke device sebelum final.
+balance_sf=1
 
 other() {
     a=$1
@@ -37,11 +42,19 @@ other() {
 }
 
 auto_sf_balance() {
-    refresh_rate=$(dumpsys display | grep -oE 'fps=[0-9]+' | head -n 1 | cut -d= -f2)
+    # [FIX] 2>/dev/null di dumpsys itu sendiri — nutup pesan
+    #     "Broken pipe" pas head -n1 nutup pipe duluan
+    refresh_rate=$(dumpsys display 2>/dev/null | grep -oE 'fps=[0-9]+' | head -n 1 | cut -d= -f2)
 
-    if [ -z "$refresh_rate" ]; then
+    # [FIX] guard div-by-zero — cek kosong DAN nol
+    if [ -z "$refresh_rate" ] || [ "$refresh_rate" -eq 0 ] 2>/dev/null; then
         refresh_rate=62
     fi
+
+    # [FIX] guard kalau bukan angka valid sama sekali
+    case "$refresh_rate" in
+        ''|*[!0-9]*) refresh_rate=62 ;;
+    esac
 
     # frame time dalam nanosecond
     frame_time=$((1000000000 / refresh_rate))
@@ -96,7 +109,7 @@ main_balance() {
     # beberapa optimasi ringan dibanding restore total (0 0 0)
     other 1 0 0
     echo "[+] Dynamic SurfaceFlinger Balance Applied (Daily Mode)"
-    echo "[+] SurfaceFlinger 2.0 | Last Update"
+    echo "[+] SurfaceFlinger 2.1 | Last Update"
 }
 
 main_balance
