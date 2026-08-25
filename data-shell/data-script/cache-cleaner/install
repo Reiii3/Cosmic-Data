@@ -137,36 +137,13 @@ qiunix_cache_cleaner() {
         # [FIX] non-root fallback: pm clear --cache-only per app,
         #     ini yang beneran nyampe ke internal cache tanpa root
         #     (lewat system_server, bukan raw filesystem access)
-        # [FIX] paralel dengan batas concurrency, bukan satu-satu
-        #     berurutan -- tiap `pm clear` spawn proses Java baru
-        #     (JVM startup cost), kalau 50-150+ app dijalankan
-        #     berurutan itu bisa numpuk jadi puluhan detik. Jalanin
-        #     beberapa bareng (background job) sekaligus, capped biar
-        #     gak overload CPU.
         log_sub "Membersihkan cache internal via pm clear --cache-only [NON-ROOT]..."
-        MAX_PARALLEL=6
-        cleared_marker="/data/local/tmp/.qiunix_cleared_count"
-        : > "$cleared_marker"
-
+        cleared=0
         for pkg in $(pm list packages -3 2>/dev/null | cut -d: -f2); do
             [ -z "$pkg" ] && continue
             if [ -f "$WHITELIST" ] && grep -qx "$pkg" "$WHITELIST"; then continue; fi
-
-            (
-              if pm clear --cache-only "$pkg" >/dev/null 2>&1; then
-                echo 1 >> "$cleared_marker"
-              fi
-            ) &
-
-            # batasi jumlah job paralel yang jalan bersamaan
-            while [ "$(jobs -r | wc -l)" -ge "$MAX_PARALLEL" ]; do
-              wait -n 2>/dev/null || sleep 0.1
-            done
+            pm clear --cache-only "$pkg" >/dev/null 2>&1 && cleared=$((cleared + 1))
         done
-        wait   # tunggu semua job sisa selesai sebelum lanjut
-
-        cleared=$(wc -l < "$cleared_marker" 2>/dev/null)
-        rm -f "$cleared_marker"
         log_success "Cache internal dibersihkan via pm ($cleared app)."
     fi
 
