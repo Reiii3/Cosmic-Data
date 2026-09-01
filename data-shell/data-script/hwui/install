@@ -1,6 +1,5 @@
 setprop debug.hwui.disable_draw_defer true
 setprop debug.hwui.disable_draw_reorder true
-setprop debug.hwui.render_dirty_regions false
 setprop debug.hwui.fps_divisor 1
 setprop debug.hwui.render_thread true
 setprop debug.hwui.render_thread_count 1
@@ -11,4 +10,5 @@ setprop debug.hwui.capture_skp_enabled false
 setprop debug.hwui.profile 0
 setprop debug.hwui.skip_empty_damage 1
 setprop debug.hwui.skip_eglmanager_telemetry true
-echo "[DEBUG] HWUI Optimizer Activated"
+echo "[-] HWUI Optimizer Activated"
+echo "[-] HWUI Optimizer Versi 10100-GCF-S"

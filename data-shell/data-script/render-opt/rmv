@@ -1,24 +1,34 @@
-setprop debug.hwc.dynThreshold 0.5
-setprop debug.hwc.showfps 0
-setprop debug.hwc.fakevsync 0
-setprop debug.hwc.logvsync 0
-setprop debug.hwc.asyncdisp 0
-setprop debug.hwui.hwc.skip_validate 0
-setprop debug.hwui.shadow_renderer monolite
-setprop debug.hwui.skip_empty_damage true
-setprop debug.hwui.shadow.renderer skiaglthreaded
-setprop debug.renderengine.vulkan false
-setprop debug.vulkan.enable_callback true
-setprop debug.vulkan.layers ""
-setprop debug.hwui.render_dirty_regions true
-setprop debug.hwui.skia_atrace_enabled true
-setprop debug.qsg_renderer 0
-setprop debug.egl.force_fxaa true
-setprop debug.egl.force_taa true
-setprop debug.egl.force_msaa true
-setprop debug.egl.force_ssaa true
-setprop debug.egl.force_smaa true
-setprop debug.egl.force_mlaa true
-setprop debug.egl.force_txaa true
-setprop debug.egl.force_csaa true
-echo "Render Optimization Deactivated"
+#!/system/bin/sh
+
+setprop debug.hwc.dynThreshold ""
+setprop debug.hwc.showfps ""
+setprop debug.hwc.fakevsync ""
+setprop debug.hwc.logvsync ""
+setprop debug.hwc.asyncdisp ""
+setprop debug.hwui.hwc.skip_validate ""
+setprop debug.hwui.skip_empty_damage ""
+setprop debug.hwui.render_dirty_regions ""
+setprop debug.hwui.skia_atrace_enabled ""
+setprop debug.qsg_renderer ""
+setprop debug.renderengine.capture_filename ""
+setprop debug.renderengine.blur_algorithm ""
+setprop debug.renderengine.capture_skia_ms ""
+setprop debug.renderengine.graphite ""
+setprop debug.renderengine.graphite_preview_optin ""
+setprop debug.renderengine.restore_blur_step ""
+setprop debug.renderengine.skia_atrace_enabled ""
+setprop debug.renderengine.skia_tracing_enabled ""
+setprop debug.renderengine.skia_use_perfetto_track_events ""
+setprop debug.renderer.process ""
+setprop debug.renderthread.reduceopstasksplitting ""
+setprop debug.egl.force_fxaa ""
+setprop debug.egl.force_taa ""
+setprop debug.egl.force_msaa ""
+setprop debug.egl.force_ssaa ""
+setprop debug.egl.force_smaa ""
+setprop debug.egl.force_mlaa ""
+setprop debug.egl.force_txaa ""
+setprop debug.egl.force_csaa ""
+
+echo "[-] Render Optimization Removed"
+echo "[+] Render Opt Version 10100-GXF-S"

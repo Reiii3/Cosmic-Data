@@ -1,19 +1,15 @@
+#!/system/bin/sh
+
 setprop debug.hwc.dynThreshold 1.5
 setprop debug.hwc.showfps 0
 setprop debug.hwc.fakevsync 0
 setprop debug.hwc.logvsync 0
 setprop debug.hwc.asyncdisp 1
 setprop debug.hwui.hwc.skip_validate 1
-setprop debug.hwui.shadow_renderer monolite
 setprop debug.hwui.skip_empty_damage true
-setprop debug.hwui.shadow.renderer skiaglthreaded
-setprop debug.renderengine.vulkan true
-setprop debug.vulkan.enable_callback false
-setprop debug.vulkan.layers ""
 setprop debug.hwui.render_dirty_regions false
 setprop debug.hwui.skia_atrace_enabled false
 setprop debug.qsg_renderer 0
-setprop debug.renderengine.backend skiavkthreaded
 setprop debug.renderengine.capture_filename ''
 setprop debug.renderengine.blur_algorithm true
 setprop debug.renderengine.capture_skia_ms 0
@@ -33,4 +29,6 @@ setprop debug.egl.force_smaa false
 setprop debug.egl.force_mlaa false
 setprop debug.egl.force_txaa false
 setprop debug.egl.force_csaa false
+
 echo "[-] Render Optimization Actived"
+echo "[+] Render Opt Version 10100-GXF-S"
