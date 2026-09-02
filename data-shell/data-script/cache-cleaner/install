@@ -1,230 +1,168 @@
 #!/system/bin/sh
 
 cache_cleaner() {
+  # ===================================================
+  #   ApacheCortex Cache Cleaner — Integrated Edition
+  #   Terintegrasi dengan ekosistem qiunix (whitelist,
+  #   game_list, foreground-detection) supaya nggak
+  #   nyikat data yang seharusnya dilindungi.
+  # ===================================================
+  
+  STATE_DIR="/data/local/tmp/qiunix_vixun"
+  WHITELIST="/data/local/tmp/whitelist_pkg.txt"
+  GAME_LIST="/data/local/tmp/game.txt"
+  LOCK_FILE="/data/local/tmp/.cache_cleaner.lock"
+  QUIET="${1:-}"   # panggil dengan "--quiet" buat mode otomatis (skip RAM benchmark)
   
   pkg="com.android.systemui"
   
+  if [ -f "$LOCK_FILE" ]; then
+    old_pid=$(cat "$LOCK_FILE" 2>/dev/null)
+    if [ -n "$old_pid" ] && kill -0 "$old_pid" 2>/dev/null; then
+        echo "[!] Cache cleaner sudah berjalan (PID $old_pid), batal."
+        exit 1
+    fi
+  fi
+  echo "$$" > "$LOCK_FILE"
+  trap 'rm -f "$LOCK_FILE"' EXIT
   
   # ===================================================
-  #              SYSTEMUI RAM SCANNER
+  #   GUARD 1: Jangan jalan kalau device lagi dipakai
+  #   main game (skip total, bukan cuma skip 1 app) —
+  #   scan cache yang berat + drop_caches bisa bikin
+  #   stutter kalau dipaksa jalan pas sesi aktif.
   # ===================================================
-  get_mem_sysui() {
-      # Lebih robust: ambil TOTAL PSS langsung, bukan parsing App Summary
-      val=$(dumpsys meminfo "$pkg" 2>/dev/null | grep "TOTAL PSS" | awk '{print $3}')
-      echo "${val:-0}"
+  if [ -f "$GAME_LIST" ]; then
+    fg_pkg=$(dumpsys activity activities 2>/dev/null \
+        | grep -m1 -E "mResumedActivity|ResumedActivity" \
+        | grep -oE "[a-zA-Z0-9_]+(\.[a-zA-Z0-9_]+)+/[a-zA-Z0-9_.]+" \
+        | head -1 | cut -d/ -f1)
+    if [ -n "$fg_pkg" ] && grep -qx "$fg_pkg" "$GAME_LIST" 2>/dev/null; then
+        echo "[!] $fg_pkg lagi dimainkan — cache cleaner ditunda."
+        exit 0
+    fi
+  fi
+  
+  # ===================================================
+  #   Kumpulin daftar package yang AMAN buat dibersihkan
+  #   (exclude: whitelist user + semua game di game_list)
+  # ===================================================
+  USER_PKGS_RAW=$(pm list packages --user 0 2>/dev/null | sed 's/package://')
+  
+  is_protected() {
+    local p="$1"
+    [ -f "$WHITELIST" ] && grep -qx "$p" "$WHITELIST" 2>/dev/null && return 0
+    [ -f "$GAME_LIST" ] && grep -qx "$p" "$GAME_LIST" 2>/dev/null && return 0
+    return 1
   }
   
+  USER_PKGS=""
+  for p in $USER_PKGS_RAW; do
+    is_protected "$p" && continue
+    USER_PKGS="$USER_PKGS $p"
+  done
+  
+  
+  # ===================================================
+  #   RAM SCAN — dilewati kalau mode --quiet (otomatis)
+  #   karena scan per-app itu mahal & cuma buat display,
+  #   nggak mempengaruhi hasil cleaning sama sekali.
+  # ===================================================
   toMB() { echo $(( ($1 + 512) / 1024 )); }
   
-  
-  # ===================================================
-  #              USER APP RAM SCANNER
-  # ===================================================
-  get_app_ram() {
-      pkgname="$1"
-      # Coba TOTAL PSS dulu, fallback ke TOTAL
-      mem=$(dumpsys meminfo "$pkgname" 2>/dev/null | grep -E "^[ \t]*TOTAL( PSS)?" | head -1 | awk '{print $NF}')
-      echo "${mem:-0}"
+  get_mem_sysui() {
+    dumpsys meminfo "$pkg" 2>/dev/null | grep "TOTAL PSS" | awk '{print $3}'
   }
   
-  # Ambil daftar package sekali saja
-  USER_PKGS=$(pm list packages --user 0 2>/dev/null | sed 's/package://')
+  if [ "$QUIET" != "--quiet" ]; then
+    echo ""
+    echo "🔍 Mengambil RAM SystemUI (SEBELUM)..."
+    before_sysui=$(get_mem_sysui); before_sysui=${before_sysui:-0}
+    echo "SystemUI Sebelum : $(toMB "$before_sysui") MB"
   
-  
-  get_gms_ram() {
-      val=$(dumpsys meminfo com.google.android.gms 2>/dev/null | grep "TOTAL PSS" | awk '{print $3}')
-      echo "${val:-0}"
-  }
-  
-  
-  # ===================================================
-  #           RAM SCAN — BEFORE CLEANING
-  # ===================================================
-  echo ""
-  echo "🔍 Mengambil RAM SystemUI (SEBELUM)..."
-  before_sysui=$(get_mem_sysui)
-  echo "SystemUI Sebelum : $(toMB $before_sysui) MB"
-  
-  echo ""
-  echo "🔍 Menghitung RAM seluruh aplikasi user (SEBELUM)..."
-  total_before_apps=0
-  for p in $USER_PKGS; do
-      val=$(get_app_ram "$p")
-      total_before_apps=$((total_before_apps + val))
-  done
-  before_apps_MB=$(toMB $total_before_apps)
-  echo "RAM User Apps Sebelum : ${before_apps_MB} MB"
-  
-  echo ""
-  echo "🔍 Mengambil RAM GMS (SEBELUM)..."
-  before_gms=$(get_gms_ram)
-  before_gms_MB=$(toMB $before_gms)
-  echo "RAM GMS Sebelum : ${before_gms_MB} MB"
-  
-  
-  # ===================================================
-  #               OPTIMIZATION STEPS
-  # ===================================================
-  echo ""
-  echo "⚠ Killing cached apps..."
-  # Gunakan 'am kill-all' — lebih langsung dari 'cmd activity kill-all'
-  am kill-all 2>/dev/null
-  sleep 1
-  
-  
-  # ======= DISABLE DROPBOX ========
-  for a in $(cmd settings list secure 2>/dev/null | grep dropbox | cut -f1 -d=); do
-      cmd settings delete secure "$a" 2>/dev/null
-  done
-  cmd dropbox restore-defaults 2>/dev/null
-  cmd dropbox set-rate-limit "$(echo 2^62 | bc)" 2>/dev/null
-  cmd settings put global dropbox_max_files 0 2>/dev/null
-  
-  
-  # ======= DISABLE LOGGING ========
-  for a in $(cmd package list packages --user 0 2>/dev/null | grep -v ia.mo | cut -f2 -d:); do
-      cmd package log-visibility --disable "$a" 2>/dev/null
-  done
-  
-  for b in $(cmd settings list global 2>/dev/null | cut -f1 -d= | grep logging); do
-      cmd settings put global "$b" 0 2>/dev/null
-  done
-  
-  for c in $(cmd settings list secure 2>/dev/null | cut -f1 -d= | grep logging); do
-      cmd settings put secure "$c" 0 2>/dev/null
-  done
-  
-  for d in $(cmd settings list system 2>/dev/null | cut -f1 -d= | grep logging); do
-      cmd settings put system "$d" 0 2>/dev/null
-  done
-  
-  
-  # ======= DISABLE TRACING ========
-  atrace --async_stop >/dev/null 2>&1
-  cmd activity trace-ipc stop 2>/dev/null
-  cmd window tracing stop 2>/dev/null
-  # Hanya tulis ke tracing_on jika bisa ditulis (cek dulu supaya tidak silent fail)
-  if [ -w /sys/kernel/tracing/tracing_on ]; then
-      echo 0 > /sys/kernel/tracing/tracing_on
-  elif [ -w /sys/kernel/debug/tracing/tracing_on ]; then
-      echo 0 > /sys/kernel/debug/tracing/tracing_on
+    # Total RAM sistem sekali panggil, BUKAN loop per-app (jauh lebih
+    # murah — versi lama manggil dumpsys meminfo per-package, bisa
+    # ratusan kali panggilan cuma buat angka display).
+    echo ""
+    echo "🔍 Ringkasan RAM sistem (SEBELUM)..."
+    before_summary=$(dumpsys meminfo 2>/dev/null | grep -A1 "Total RAM:" | head -2)
+    echo "$before_summary"
   fi
   
   
   # ===================================================
-  #            CLEAR CACHE (ALL)
+  #   OPTIMIZATION STEPS
   # ===================================================
   echo ""
-  echo "🧹 Membersihkan cache semua aplikasi user..."
+  echo "[!] Killing cached apps..."
+  am kill-all 2>/dev/null
+  sleep 1
+  
+  # ======= LOGGING / DROPBOX / TRACING =======
+  # Sengaja TIDAK diimplementasi ulang di sini — qiunix sudah punya
+  # disable_runtime_logging() & disable_misc_settings_once() yang lebih
+  # lengkap (dengan marker file buat restore). Cukup panggil kalau
+  # fiturnya aktif, biar nggak ada 2 sumber kebenaran yang bisa bentrok.
+  if command -v qiunix >/dev/null 2>&1; then
+    [ "$(qiunix --runtime-logging --get 2>/dev/null)" = "1" ] && qiunix --tweak runtime-logging
+    [ "$(qiunix --misc-settings --get 2>/dev/null)" = "1" ]   && qiunix --tweak misc-settings
+  fi
+  
+  
+  # ===================================================
+  #   CLEAR CACHE — hanya untuk package yang tidak
+  #   diproteksi (bukan whitelist, bukan game)
+  # ===================================================
+  echo ""
+  echo "🧹 Membersihkan cache aplikasi (di luar whitelist & game)..."
   
   for p in $USER_PKGS; do
-      # Hapus cache & code_cache dengan maxdepth agar tidak rekursif tak terbatas
-      find /data/data/$p/cache -maxdepth 3 -type f -delete 2>/dev/null
-      find /data/data/$p/code_cache -maxdepth 3 -type f -delete 2>/dev/null
+    find "/data/data/$p/cache" -maxdepth 3 -type f -delete 2>/dev/null
+    find "/data/data/$p/code_cache" -maxdepth 3 -type f -delete 2>/dev/null
   done
   
-  # user_de dirs — tambah maxdepth untuk safety
-  find /data/user_de -mindepth 3 -maxdepth 4 -name "cache" -type d 2>/dev/null | while read dir; do
-      find "$dir" -maxdepth 2 -type f -delete 2>/dev/null
+  find /data/user_de -mindepth 3 -maxdepth 4 -name "cache" -type d 2>/dev/null | while read -r dir; do
+    # dir formatnya /data/user_de/0/<pkg>/cache -> ambil <pkg> buat cek proteksi
+    owner_pkg=$(echo "$dir" | cut -d/ -f5)
+    is_protected "$owner_pkg" && continue
+    find "$dir" -maxdepth 2 -type f -delete 2>/dev/null
   done
-  find /data/user_de -mindepth 3 -maxdepth 4 -name "code_cache" -type d 2>/dev/null | while read dir; do
-      find "$dir" -maxdepth 2 -type f -delete 2>/dev/null
+  find /data/user_de -mindepth 3 -maxdepth 4 -name "code_cache" -type d 2>/dev/null | while read -r dir; do
+    owner_pkg=$(echo "$dir" | cut -d/ -f5)
+    is_protected "$owner_pkg" && continue
+    find "$dir" -maxdepth 2 -type f -delete 2>/dev/null
   done
   
-  # sdcard dirs
-  find /sdcard/Android/data -mindepth 2 -maxdepth 3 -name "cache" -type d 2>/dev/null | while read dir; do
-      find "$dir" -maxdepth 2 -type f -delete 2>/dev/null
+  # --- External storage cache: PALING RAWAN, banyak app nyimpen
+  #     "download content" (bukan cache beneran) di folder ini ---
+  find /sdcard/Android/data -mindepth 2 -maxdepth 3 -name "cache" -type d 2>/dev/null | while read -r dir; do
+    owner_pkg=$(echo "$dir" | cut -d/ -f5)
+    is_protected "$owner_pkg" && continue
+    find "$dir" -maxdepth 2 -type f -delete 2>/dev/null
   done
   
-  # Extra wipe
+  # Thumbnail cache (aman, regenerasi otomatis)
   rm -rf /sdcard/DCIM/.thumbnails/* 2>/dev/null
-  rm -f /data/misc/logd/* 2>/dev/null
   
   
   # ================= GMS CACHE CLEANER ==================
-  echo "🧹 Membersihkan cache Google Mobile Services..."
-  find /data/data/com.google.android.gms/cache -maxdepth 3 -type f -delete 2>/dev/null
-  find /data/data/com.google.android.gms/code_cache -maxdepth 3 -type f -delete 2>/dev/null
-  find /data/user_de/0/com.google.android.gms/cache -maxdepth 3 -type f -delete 2>/dev/null
-  find /data/user_de/0/com.google.android.gms/code_cache -maxdepth 3 -type f -delete 2>/dev/null
-  
-  
-  # ===================================================
-  #   [INTEGRASI] kazuyoo clean_cache — Celestial-Game-Opt
-  #   Sumber: gameopt/system/bin/kazuyoo, case "clean_cache"
-  # ===================================================
-  echo ""
-  echo "🧹 Menjalankan deep-cleanup tambahan (kazuyoo clean_cache)..."
-  
-  echo "Trimming partitions..."
-  nice -n 19 ionice -c3 setsid sh -c '
-      for partition in data cache metadata storage; do
-          if command -v su >/dev/null; then
-              fstrim -v "/$partition"
-          else
-              sm fstrim "/$partition"
-          fi
-      done
-  ' >/dev/null 2>&1 &
-  
-  echo "Clearing app cache (kazuyoo pattern)..."
-  nice -n 19 ionice -c3 setsid sh -c '
-      find /data/data/*/cache/* /data/data/*/code_cache/* \
-           /data/user_de/*/*/cache/* /data/user_de/*/*/code_cache/* \
-           /sdcard/Android/data/*/cache/* -delete 2>/dev/null
-  ' >/dev/null 2>&1 &
-  
-  cmd package trim-caches 1024G 2>/dev/null
-  
-  echo "Running system cleanup (kazuyoo internal-state cleanup)..."
-  nice -n 19 ionice -c3 setsid sh -c '
-      cmd stats clear-puller-cache
-      cmd activity clear-debug-app
-      cmd activity clear-watch-heap all
-      cmd activity clear-exit-info all
-      cmd activity clear-start-info all
-      cmd content reset-today-stats
-      cmd companiondevice refresh-cache
-      cmd companiondevice remove-inactive-associations
-      cmd blob_store clear-all-blobs
-      cmd blob_store clear-all-sessions
-      cmd device_policy clear-freeze-period-record
-      wm tracing size 0
-      cmd font clear
-      cmd location_time_zone_manager clear_recorded_provider_states
-      cmd lock_settings remove-cache
-      cmd media.camera clear-stream-use-case-override
-      cmd media.camera watch clear
-      cmd safety_center clear-data
-      cmd time_detector clear_network_time
-      cmd time_detector clear_system_clock_network_time
-      simpleperf --log fatal --log-to-android-buffer 0
-      cmd settings put global activity_starts_logging_enabled 0
-      cmd otadexopt cleanup
-      dumpsys media.metrics --clear
-      dumpsys procstats --clear
-      cmd binder_calls_stats --reset
-      cmd autofill destroy sessions
-      dumpsys batterystats --reset
-      dumpsys battery reset
-      cmd usagestats clear-last-used-timestamps -a
-      sm idle-maint run
-  ' >/dev/null 2>&1 &
-  
-  # Beri waktu proses background di atas jalan sebelum lanjut ke drop_caches,
-  # supaya efeknya ikut terukur di RAM scan SESUDAH.
-  sleep 2
+  if ! is_protected "com.google.android.gms"; then
+    echo "🧹 Membersihkan cache Google Mobile Services..."
+    find /data/data/com.google.android.gms/cache -maxdepth 3 -type f -delete 2>/dev/null
+    find /data/data/com.google.android.gms/code_cache -maxdepth 3 -type f -delete 2>/dev/null
+    find /data/user_de/0/com.google.android.gms/cache -maxdepth 3 -type f -delete 2>/dev/null
+    find /data/user_de/0/com.google.android.gms/code_cache -maxdepth 3 -type f -delete 2>/dev/null
+  fi
   
   
   # ================= SYSTEM LEVEL CLEANUP ==================
   echo "🧹 Drop page cache (butuh root)..."
   sync
   if [ -w /proc/sys/vm/drop_caches ]; then
-      # drop_caches=3: bersihkan pagecache + dentries + inodes
-      echo 3 > /proc/sys/vm/drop_caches
-      echo "✅ Page cache berhasil di-drop"
+    echo 3 > /proc/sys/vm/drop_caches
+    echo "[√] Page cache berhasil di-drop"
   else
-      echo "⚠ drop_caches tidak bisa diakses (SELinux atau bukan root)"
+    echo "[!] drop_caches tidak bisa diakses (SELinux atau bukan root)"
   fi
   
   pm trim-caches 1024G 2>/dev/null
@@ -232,47 +170,30 @@ cache_cleaner() {
   
   
   # ===================================================
-  #           RAM SCAN — AFTER CLEANING
+  #   RAM SCAN — SESUDAH (skip kalau --quiet)
   # ===================================================
-  echo ""
-  echo "🔍 Mengambil RAM SystemUI (SESUDAH)..."
-  after_sysui=$(get_mem_sysui)
-  echo "SystemUI Sesudah : $(toMB $after_sysui) MB"
+  if [ "$QUIET" != "--quiet" ]; then
+    echo ""
+    echo "🔍 Mengambil RAM SystemUI (SESUDAH)..."
+    after_sysui=$(get_mem_sysui); after_sysui=${after_sysui:-0}
+    echo "[-] SystemUI Sesudah : $(toMB "$after_sysui") MB"
   
-  echo ""
-  echo "🔍 Menghitung RAM seluruh aplikasi user (SESUDAH)..."
-  total_after_apps=0
-  for p in $USER_PKGS; do
-      val=$(get_app_ram "$p")
-      total_after_apps=$((total_after_apps + val))
-  done
-  after_apps_MB=$(toMB $total_after_apps)
-  echo "RAM User Apps Sesudah : ${after_apps_MB} MB"
+    echo ""
+    echo "🔍 Ringkasan RAM sistem (SESUDAH)..."
+    after_summary=$(dumpsys meminfo 2>/dev/null | grep -A1 "Total RAM:" | head -2)
+    echo "[-] $after_summary"
   
-  echo ""
-  echo "🔍 Mengambil RAM GMS (SESUDAH)..."
-  after_gms=$(get_gms_ram)
-  after_gms_MB=$(toMB $after_gms)
-  echo "RAM GMS Sesudah : ${after_gms_MB} MB"
+    sysui_freed=$(( before_sysui - after_sysui ))
+    echo ""
+    echo "======================================="
+    echo "📊 HASIL CLEANING"
+    echo "======================================="
+    echo "SystemUI : $(toMB "$before_sysui") MB → $(toMB "$after_sysui") MB (freed: $(toMB "$sysui_freed") MB)"
+    echo "======================================="
+  fi
   
-  
-  # ===================================================
-  #                SUMMARY HASIL
-  # ===================================================
-  echo ""
-  echo "======================================="
-  echo "📊 HASIL CLEANING"
-  echo "======================================="
-  
-  sysui_freed=$(( (before_sysui - after_sysui) ))
-  apps_freed=$(( total_before_apps - total_after_apps ))
-  gms_freed=$(( before_gms - after_gms ))
-  
-  echo "SystemUI   : $(toMB $before_sysui) MB → $(toMB $after_sysui) MB  (freed: $(toMB $sysui_freed) MB)"
-  echo "User Apps  : ${before_apps_MB} MB → ${after_apps_MB} MB  (freed: $(toMB $apps_freed) MB)"
-  echo "GMS        : ${before_gms_MB} MB → ${after_gms_MB} MB  (freed: $(toMB $gms_freed) MB)"
-  echo "======================================="
-  echo "✅ VeuLexier Cleaning Done!"
+  echo "[√] ApacheCortex Cleaning Done!"
+
 }
 
-cache_cleaner > /data/local/tmp/.apache_cache_cleaner
+cache_cleaner "$@" > /data/local/tmp/.apache_cache_cleaner
